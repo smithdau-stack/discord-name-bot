@@ -2,8 +2,15 @@ require('dotenv').config();
 const { google } = require('googleapis');
 
 async function getSheetAuth() {
+  const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  
+  // แก้ \n ที่หายไปตอน parse JSON (private key ต้องมี newline จริง ไม่ใช่ literal \n)
+  if (credentials.private_key) {
+    credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+  }
+  
   const auth = new google.auth.GoogleAuth({
-    keyFile: 'credentials.json',
+    credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
   return auth;
