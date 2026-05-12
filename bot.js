@@ -25,6 +25,7 @@ const CLASS_LIST = [
   { label: 'Gypsy',          value: 'gypsy'          },
   { label: 'Professor',      value: 'professor'      },
   { label: 'Stalker',        value: 'stalker'        },
+  { label: 'Doram',         value: 'doram'        },
 ];
 
 const pendingClassChange = new Map();

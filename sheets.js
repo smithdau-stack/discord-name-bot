@@ -3,7 +3,7 @@ const { google } = require('googleapis');
 
 async function getSheetAuth() {
   const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
+    keyFile: 'credentials.json',
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
   return auth;
