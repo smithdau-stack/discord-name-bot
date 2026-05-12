@@ -25,7 +25,7 @@ const CLASS_LIST = [
   { label: 'Gypsy',          value: 'gypsy'          },
   { label: 'Professor',      value: 'professor'      },
   { label: 'Stalker',        value: 'stalker'        },
-  { label: 'Doram',         value: 'doram'        },
+  { label: 'Doram',          value: 'doram'          },
 ];
 
 const pendingClassChange = new Map();
@@ -45,7 +45,6 @@ client.on('interactionCreate', async (interaction) => {
     const members = await getMembers();
     const typed   = interaction.options.getFocused().toLowerCase();
 
-    // กรองชื่อที่พิมพ์ตรงกัน แล้วส่งกลับสูงสุด 25 รายการ
     const filtered = members
       .filter(m => m.name.toLowerCase().includes(typed))
       .slice(0, 25)
@@ -106,7 +105,6 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isChatInputCommand() && interaction.commandName === 'เปลี่ยนอาชีพ') {
     const charName = interaction.options.getString('ชื่อตัวละคร');
 
-    // ดึงอาชีพปัจจุบันจาก Sheet
     const members      = await getMembers();
     const charData     = members.find(m => m.name === charName);
     const currentClass = charData?.currentClass || 'ไม่ระบุ';

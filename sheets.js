@@ -4,7 +4,6 @@ const { google } = require('googleapis');
 async function getSheetAuth() {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
   
-  // แก้ \n ที่หายไปตอน parse JSON (private key ต้องมี newline จริง ไม่ใช่ literal \n)
   if (credentials.private_key) {
     credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
   }
@@ -42,7 +41,7 @@ async function getMembers() {
   });
 
   const rows = res.data.values || [];
-  console.log('ดึงข้อมูลได้:', rows.length, 'แถว'); // เช็คตรงนี้
+  console.log('ดึงข้อมูลได้:', rows.length, 'แถว');
 
   return rows
     .filter(row => row[0] && row[0].trim() !== '')
