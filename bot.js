@@ -167,5 +167,6 @@ client.on('interactionCreate', async (interaction) => {
   }
 
 });
-
+console.log('Token exists:', !!process.env.DISCORD_TOKEN);
+console.log('Token length:', process.env.DISCORD_TOKEN?.length);
 client.login(process.env.DISCORD_TOKEN);
