@@ -25,6 +25,7 @@ const CLASS_LIST = [
   { label: 'Gypsy',          value: 'gypsy'          },
   { label: 'Professor',      value: 'professor'      },
   { label: 'Stalker',        value: 'stalker'        },
+  { label: 'Rebellion',        value: 'rebellion'        },  
   { label: 'Doram',          value: 'doram'          },
 ];
 
