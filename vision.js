@@ -1,5 +1,4 @@
-const fetch = (...args) =>
-  import('node-fetch').then(({ default: f }) => f(...args));
+// ใช้ global fetch ของ Node 18+ (ไม่ต้องพึ่ง node-fetch)
 
 const PROMPTS = {
   general: `
@@ -97,9 +96,24 @@ Numbers only, no units.
 `
 };
 
+async function downloadAsDataUrl(imageUrl) {
+  const res = await fetch(imageUrl);
+  if (!res.ok) {
+    throw new Error(`Discord image download failed: ${res.status} ${res.statusText} (${imageUrl.split('?')[0]})`);
+  }
+  const type = (res.headers.get('content-type') || 'image/png').split(';')[0];
+  const buf = Buffer.from(await res.arrayBuffer());
+  console.log(`[vision] downloaded ${buf.length} bytes (${type})`);
+  return `data:${type};base64,${buf.toString('base64')}`;
+}
+
 async function analyzeImage(imageUrl, imageType) {
   const prompt = PROMPTS[imageType];
   if (!prompt) throw new Error(`Unknown image type: ${imageType}`);
+  if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not set');
+
+  console.log(`[vision] analyzing type=${imageType}`);
+  const dataUrl = await downloadAsDataUrl(imageUrl);
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -115,7 +129,7 @@ async function analyzeImage(imageUrl, imageType) {
           role: 'user',
           content: [
             { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } }
+            { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } }
           ]
         }
       ]
@@ -124,11 +138,12 @@ async function analyzeImage(imageUrl, imageType) {
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`OpenAI API error: ${err}`);
+    throw new Error(`OpenAI API error ${response.status}: ${err}`);
   }
 
   const data = await response.json();
-  const raw = data.choices[0].message.content.trim();
+  const raw = (data.choices?.[0]?.message?.content || '').trim();
+  console.log(`[vision] raw response (${imageType}): ${raw}`);
 
   // ลบ markdown code block ถ้ามี
   const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();

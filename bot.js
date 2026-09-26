@@ -103,6 +103,7 @@ client.on('messageCreate', async (message) => {
   try {
     processing = await message.reply(`⏳ กำลังอ่าน **${current.label}**...`);
 
+    console.log(`[stats] step=${session.step} user=${userId} url=${String(imageUrl).split('?')[0]}`);
     const extracted = await analyzeImage(imageUrl, session.step);
     session[session.step] = extracted;
 
@@ -157,7 +158,7 @@ client.on('messageCreate', async (message) => {
       );
     }
   } catch (err) {
-    console.error('Vision error:', err);
+    console.error(`[stats] step=${session.step} user=${userId} failed:`, err?.stack || err);
     if (processing) {
       await processing.edit(
         `❌ อ่านรูป **${current.label}** ไม่ได้ครับ\n` +
@@ -329,3 +330,6 @@ client.on('interactionCreate', async (interaction) => {
 console.log('Token exists:', !!process.env.DISCORD_TOKEN);
 console.log('Token length:', process.env.DISCORD_TOKEN?.length);
 client.login(process.env.DISCORD_TOKEN);
+// log error จริงๆ แทนที่จะ crash เงียบๆ (ดูได้ใน flyctl logs)
+process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err?.stack || err));
+process.on('uncaughtException', (err) => console.error('[uncaughtException]', err?.stack || err));
