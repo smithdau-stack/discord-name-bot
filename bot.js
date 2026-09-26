@@ -9,7 +9,8 @@ const {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } = require('discord.js');
-const { appendToSheet, getMembers } = require('./sheets');
+const { appendToSheet, getMembers, writeStatsToSheet } = require('./sheets');
+const { analyzeImage } = require('./vision');
 
 const CLASS_LIST = [
   { label: 'Champion',       value: 'champion'       },
@@ -25,20 +26,148 @@ const CLASS_LIST = [
   { label: 'Gypsy',          value: 'gypsy'          },
   { label: 'Professor',      value: 'professor'      },
   { label: 'Stalker',        value: 'stalker'        },
-  { label: 'Rebellion',        value: 'rebellion'        },  
+  { label: 'Rebellion',      value: 'rebellion'      },
   { label: 'Doram',          value: 'doram'          },
 ];
 
 const pendingClassChange = new Map();
+const pendingUpload      = new Map();
+// pendingUpload structure:
+// { charName, charClass, discordId, step, general, quasi, special, notice }
+
+// ── ISO Week helper ──
+function getISOWeekLabel() {
+  const now  = new Date();
+  const date = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ]
 });
 
 client.once('clientReady', () => {
   console.log(`Bot พร้อมแล้ว: ${client.user.tag}`);
 });
 
+// ── รับรูปภาพทีละ step (messageCreate) ──
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+
+  const session = pendingUpload.get(message.author.id);
+  if (!session) return;
+  if (message.attachments.size === 0) return;
+
+  const attachment = message.attachments.first();
+  const imageUrl   = attachment.url;
+  const userId     = message.author.id;
+
+  const stepMap = {
+    general: {
+      label:     'General Stats',
+      next:      'quasi',
+      nextLabel: 'Quasi Stats',
+      stepNum:   '2/4',
+    },
+    quasi: {
+      label:     'Quasi Stats',
+      next:      'special',
+      nextLabel: 'Special',
+      stepNum:   '3/4',
+    },
+    special: {
+      label:     'Special',
+      next:      'notice',
+      nextLabel: 'Notice (PDEF)',
+      stepNum:   '4/4',
+    },
+    notice: {
+      label:     'Notice (PDEF)',
+      next:      null,
+      nextLabel: null,
+      stepNum:   null,
+    },
+  };
+
+  const current = stepMap[session.step];
+  if (!current) return;
+
+  let processing;
+  try {
+    processing = await message.reply(`⏳ กำลังอ่าน **${current.label}**...`);
+
+    const extracted = await analyzeImage(imageUrl, session.step);
+    session[session.step] = extracted;
+
+    if (current.next) {
+      // ยังไม่ครบ 4 รูป → ขอรูปถัดไป
+      session.step = current.next;
+      pendingUpload.set(userId, session);
+
+      await processing.edit(
+        `✅ **${current.label}** อ่านได้แล้ว!\n\n` +
+        `**Step ${current.stepNum}** → ` +
+        `ส่งรูป 📷 **${current.nextLabel}** ต่อเลยครับ`
+      );
+    } else {
+      // ครบ 4 รูปแล้ว → บันทึกลง Sheet
+      await processing.edit(`⏳ ครบแล้ว! กำลังบันทึกลง Google Sheet...`);
+
+      await writeStatsToSheet({
+        discord_id: session.discordId,
+        name:       session.charName,
+        class:      session.charClass,
+        general:    session.general,
+        quasi:      session.quasi,
+        special:    session.special,
+        notice:     session.notice,
+      });
+
+      pendingUpload.delete(userId);
+
+      const g = session.general;
+      const q = session.quasi;
+      const s = session.special;
+      const n = session.notice;
+
+      await processing.edit(
+        `✅ **บันทึก Stats เรียบร้อยแล้ว!**\n` +
+        `👤 **${session.charName}** (${session.charClass}) | ${getISOWeekLabel()}\n\n` +
+        `**📊 General Stats**\n` +
+        `HP: \`${g?.hp ?? '-'}\` | PATK: \`${g?.patk ?? '-'}\` | MATK: \`${g?.matk ?? '-'}\`\n\n` +
+        `**⚡ Quasi Stats**\n` +
+        `CRIT: \`${q?.crit ?? '-'}\` | CRIT DMG: \`${q?.crit_dmg ?? '-'}%\`\n` +
+        `PDMG: \`${q?.pdmg ?? '-'}%\` | MDMG: \`${q?.mdmg ?? '-'}%\`\n` +
+        `PDMG.R: \`${q?.pdmg_r ?? '-'}%\` | MDMG.R: \`${q?.mdmg_r ?? '-'}%\`\n` +
+        `Healing Done: \`${q?.healing_done ?? '-'}%\` | Healing Taken: \`${q?.healing_taken ?? '-'}%\`\n` +
+        `Ignore PDEF: \`${q?.ignore_pdef ?? '-'}\` | Ignore MDEF: \`${q?.ignore_mdef ?? '-'}\`\n` +
+        `PvE DMG Reduc: \`${q?.pve_dmg_reduc ?? '-'}\` | PvP DMG Reduc: \`${q?.pvp_dmg_reduc ?? '-'}\`\n` +
+        `PvE DMG Bonus: \`${q?.pve_dmg_bonus ?? '-'}\` | PvP DMG Bonus: \`${q?.pvp_dmg_bonus ?? '-'}\`\n\n` +
+        `**✨ Special**\n` +
+        `Equip PDEF%: \`${s?.equip_pdef_pct ?? '-'}%\` | Equip MDEF%: \`${s?.equip_mdef_pct ?? '-'}%\`\n\n` +
+        `**📋 Notice**\n` +
+        `Base PDEF: \`${n?.base_pdef ?? '-'}\` | Equip PDEF: \`${n?.equip_pdef ?? '-'}\``
+      );
+    }
+  } catch (err) {
+    console.error('Vision error:', err);
+    if (processing) {
+      await processing.edit(
+        `❌ อ่านรูป **${current.label}** ไม่ได้ครับ\n` +
+        `กรุณาส่งรูปใหม่อีกครั้ง (รูปต้องชัดเจน ไม่มีการ crop ส่วนสำคัญออก)`
+      );
+    }
+  }
+});
+
+// ── Slash Commands & Interactions ──
 client.on('interactionCreate', async (interaction) => {
 
   // ── Autocomplete ──
@@ -58,7 +187,7 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // ── /เปลี่ยนชื่อ → รับชื่อเก่าจาก Autocomplete แล้วเปิด Modal กรอกชื่อใหม่ ──
+  // ── /เปลี่ยนชื่อ ──
   if (interaction.isChatInputCommand() && interaction.commandName === 'เปลี่ยนชื่อ') {
     const oldName = interaction.options.getString('ชื่อเก่า');
 
@@ -102,7 +231,7 @@ client.on('interactionCreate', async (interaction) => {
     });
   }
 
-  // ── /เปลี่ยนอาชีพ → รับชื่อจาก Autocomplete แล้ว Dropdown เลือกอาชีพใหม่ ──
+  // ── /เปลี่ยนอาชีพ ──
   if (interaction.isChatInputCommand() && interaction.commandName === 'เปลี่ยนอาชีพ') {
     const charName = interaction.options.getString('ชื่อตัวละคร');
 
@@ -166,7 +295,37 @@ client.on('interactionCreate', async (interaction) => {
     });
   }
 
+  // ── /upload-stats ──
+  if (interaction.isChatInputCommand() && interaction.commandName === 'upload-stats') {
+    const charName  = interaction.options.getString('ชื่อตัวละคร');
+    const members   = await getMembers();
+    const charData  = members.find(m => m.name === charName);
+    const charClass = charData?.currentClass || 'ไม่ระบุ';
+
+    // เริ่ม session ใหม่
+    pendingUpload.set(interaction.user.id, {
+      charName,
+      charClass,
+      discordId: interaction.user.id,
+      step:    'general',
+      general: null,
+      quasi:   null,
+      special: null,
+      notice:  null,
+    });
+
+    await interaction.reply({
+      content:
+        `📊 **Upload Stats ประจำสัปดาห์**\n` +
+        `👤 **${charName}** (${charClass}) | ${getISOWeekLabel()}\n\n` +
+        `**Step 1/4** — ส่งรูป 📷 **General Stats** มาเลยครับ\n` +
+        `_(แนบรูปภาพใน message ถัดไปได้เลย)_`,
+      flags: 64,
+    });
+  }
+
 });
+
 console.log('Token exists:', !!process.env.DISCORD_TOKEN);
 console.log('Token length:', process.env.DISCORD_TOKEN?.length);
 client.login(process.env.DISCORD_TOKEN);
