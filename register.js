@@ -22,6 +22,16 @@ const commands = [
         .setRequired(true)
         .setAutocomplete(true)
     ),
+  new SlashCommandBuilder()
+    .setName('stats')
+    .setDescription('อัปโหลด Stats ตัวละครประจำสัปดาห์')
+    .addStringOption(option =>
+      option
+        .setName('ชื่อตัวละคร')
+        .setDescription('ชื่อตัวละครของคุณ')
+        .setRequired(true)
+        .setAutocomplete(true)
+    ),
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);

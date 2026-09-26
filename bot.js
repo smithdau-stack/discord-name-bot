@@ -296,7 +296,7 @@ client.on('interactionCreate', async (interaction) => {
   }
 
   // ── /upload-stats ──
-  if (interaction.isChatInputCommand() && interaction.commandName === 'upload-stats') {
+  if (interaction.isChatInputCommand() && interaction.commandName === 'stats') {
     const charName  = interaction.options.getString('ชื่อตัวละคร');
     const members   = await getMembers();
     const charData  = members.find(m => m.name === charName);
