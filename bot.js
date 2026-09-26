@@ -33,7 +33,8 @@ const CLASS_LIST = [
 const pendingClassChange = new Map();
 const pendingUpload      = new Map();
 // pendingUpload structure:
-// { charName, charClass, discordId, step, general, quasi, special, notice }
+// { charName, charClass, discordId, channelId, expiresAt, step, general, quasi, special, notice }
+const SESSION_TTL_MS = 10 * 60 * 1000; // session หมดอายุเมื่อไม่มีการส่งรูปเกิน 10 นาที
 
 // ── ISO Week helper ──
 function getISOWeekLabel() {
@@ -63,6 +64,11 @@ client.on('messageCreate', async (message) => {
 
   const session = pendingUpload.get(message.author.id);
   if (!session) return;
+  if (Date.now() > session.expiresAt) {
+    pendingUpload.delete(message.author.id);
+    return;
+  }
+  if (message.channelId !== session.channelId) return;
   if (message.attachments.size === 0) return;
 
   const attachment = message.attachments.first();
@@ -110,6 +116,7 @@ client.on('messageCreate', async (message) => {
     if (current.next) {
       // ยังไม่ครบ 4 รูป → ขอรูปถัดไป
       session.step = current.next;
+      session.expiresAt = Date.now() + SESSION_TTL_MS;
       pendingUpload.set(userId, session);
 
       await processing.edit(
@@ -308,6 +315,8 @@ client.on('interactionCreate', async (interaction) => {
       charName,
       charClass,
       discordId: interaction.user.id,
+      channelId: interaction.channelId,
+      expiresAt: Date.now() + SESSION_TTL_MS,
       step:    'general',
       general: null,
       quasi:   null,
