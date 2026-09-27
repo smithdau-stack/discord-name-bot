@@ -9,7 +9,7 @@ const {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } = require('discord.js');
-const { appendToSheet, getMembers, writeStatsToSheet } = require('./sheets');
+const { appendToSheet, getMembers, writeStatsToSheet, getUnnotifiedReviews, markNotified } = require('./sheets');
 const { analyzeImage } = require('./vision');
 
 const CLASS_LIST = [
@@ -56,7 +56,40 @@ const client = new Client({
 
 client.once('clientReady', () => {
   console.log(`Bot พร้อมแล้ว: ${client.user.tag}`);
+  setInterval(notifyReviewResults, REVIEW_POLL_MS);
 });
+
+// ── แจ้งผู้ส่งเมื่อ reviewer อนุมัติ/ปฏิเสธ (ตรวจ Sheet ทุก 2 นาที) ──
+const REVIEW_POLL_MS = 2 * 60 * 1000;
+let notifying = false;
+
+async function notifyReviewResults() {
+  if (notifying) return;
+  notifying = true;
+  try {
+    const items = await getUnnotifiedReviews();
+    for (const it of items) {
+      const approved = it.status === 'approved';
+      const text = approved
+        ? `✅ Stats ของ **${it.name}** (${it.week}) ได้รับการ **อนุมัติ** แล้วครับ`
+        : `❌ Stats ของ **${it.name}** (${it.week}) ถูก **ปฏิเสธ**\n` +
+          `เหตุผล: ${it.note || '-'}\nกรุณาพิมพ์ /stats แล้วส่งใหม่อีกครั้งครับ`;
+      try {
+        const user = await client.users.fetch(it.discordId);
+        await user.send(text);
+        console.log(`[review] แจ้ง ${it.name} (${it.status}) สำเร็จ`);
+      } catch (err) {
+        // เช่น ผู้ใช้ปิดรับ DM — ไม่ retry เพื่อกัน loop
+        console.error(`[review] ส่ง DM หา ${it.name} ไม่ได้:`, err.message);
+      }
+      await markNotified(it.rowNum);
+    }
+  } catch (err) {
+    console.error('[review] ตรวจ Sheet ไม่สำเร็จ:', err?.stack || err);
+  } finally {
+    notifying = false;
+  }
+}
 
 // ── รับรูปภาพทีละ step (messageCreate) ──
 client.on('messageCreate', async (message) => {

@@ -124,5 +124,45 @@ function getISOWeek() {
   return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
-module.exports = { appendToSheet, getMembers, writeStatsToSheet };
+// ── Review: แถวที่ reviewer ตัดสินแล้วแต่ยังไม่ได้แจ้งผู้ส่ง ──
+// คอลัมน์: B discord_id | C name | A week | Z status | AB review_note | AC notified_at
+async function getUnnotifiedReviews() {
+  const auth   = await getSheetAuth();
+  const sheets = google.sheets({ version: 'v4', auth });
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range:         'stats_log!A2:AD',
+  });
+
+  const out = [];
+  (res.data.values || []).forEach((r, i) => {
+    const status = r[25];
+    if ((status === 'approved' || status === 'rejected') && !r[28]) {
+      out.push({
+        rowNum:    i + 2,
+        week:      r[0],
+        discordId: r[1],
+        name:      r[2],
+        status,
+        note:      r[27] || '',
+      });
+    }
+  });
+  return out;
+}
+
+async function markNotified(rowNum) {
+  const auth   = await getSheetAuth();
+  const sheets = google.sheets({ version: 'v4', auth });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId:    process.env.SPREADSHEET_ID,
+    range:            `stats_log!AC${rowNum}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[new Date().toISOString()]] },
+  });
+}
+
+module.exports = { appendToSheet, getMembers, writeStatsToSheet, getUnnotifiedReviews, markNotified };
 
