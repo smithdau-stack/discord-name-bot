@@ -24,14 +24,7 @@ const commands = [
     ),
   new SlashCommandBuilder()
     .setName('stats')
-    .setDescription('อัปโหลด Stats ตัวละครประจำสัปดาห์')
-    .addStringOption(option =>
-      option
-        .setName('ชื่อตัวละคร')
-        .setDescription('ชื่อตัวละครของคุณ')
-        .setRequired(true)
-        .setAutocomplete(true)
-    ),
+    .setDescription('อัปโหลด Stats ตัวละครประจำสัปดาห์ (ตัวละครดึงจาก Member List อัตโนมัติตาม Discord ของคุณ)'),
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);

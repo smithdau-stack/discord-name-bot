@@ -9,7 +9,7 @@ const {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } = require('discord.js');
-const { appendToSheet, getMembers, writeStatsToSheet, getUnnotifiedReviews, markNotified } = require('./sheets');
+const { appendToSheet, getMembers, getMemberByDiscordId, writeStatsToSheet, getUnnotifiedReviews, markNotified } = require('./sheets');
 const { analyzeImage } = require('./vision');
 
 const CLASS_LIST = [
@@ -338,10 +338,18 @@ client.on('interactionCreate', async (interaction) => {
 
   // ── /upload-stats ──
   if (interaction.isChatInputCommand() && interaction.commandName === 'stats') {
-    const charName  = interaction.options.getString('ชื่อตัวละคร');
-    const members   = await getMembers();
-    const charData  = members.find(m => m.name === charName);
-    const charClass = charData?.currentClass || 'ไม่ระบุ';
+    // หาตัวละครจาก discord_id ของคนพิมพ์คำสั่งเอง (1 discord_id = 1 สมาชิกเสมอ)
+    // กันไม่ให้เลือกชื่อ/อาชีพผิดคน หรือเลือกชื่อคนอื่นโดยตั้งใจ
+    const member = await getMemberByDiscordId(interaction.user.id);
+    if (!member) {
+      await interaction.reply({
+        content: `❌ ไม่พบชื่อของคุณใน Member List ครับ\nกรุณาติดต่อแอดมินให้เพิ่มชื่อ + discord_id ในชีทก่อน`,
+        flags: 64,
+      });
+      return;
+    }
+    const charName  = member.name;
+    const charClass = member.currentClass;
 
     // เริ่ม session ใหม่
     pendingUpload.set(interaction.user.id, {

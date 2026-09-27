@@ -31,12 +31,13 @@ async function appendToSheet(rowData) {
 }
 
 // ── Cache สำหรับ Member List ──
-let memberCache = null;
+// Member List: A=Name, B=Class JOB, C=Emblem, D=discord_id (1 discord_id = 1 สมาชิกเสมอ)
+let memberCache       = null; // [{ name, currentClass, discordId }]
+let memberByDiscordId = null; // Map<discordId, member>
 let cacheTime = 0;
 const CACHE_TTL = 60 * 1000; // 60 วินาที
 
-// ดึงรายชื่อจาก Tab "Member List"
-async function getMembers() {
+async function loadMembers() {
   // ถ้ามี cache และยังไม่หมดอายุ → ใช้ของเก่า
   if (memberCache && Date.now() - cacheTime < CACHE_TTL) {
     return memberCache;
@@ -47,7 +48,7 @@ async function getMembers() {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range:         "'Member List'!A2:B",
+    range:         "'Member List'!A2:D",
   });
 
   const rows = res.data.values || [];
@@ -58,13 +59,27 @@ async function getMembers() {
     .map(row => ({
       name:         row[0].trim(),
       currentClass: row[1]?.trim() || 'ไม่ระบุ',
+      discordId:    row[3]?.trim() || '',
     }));
 
   // เก็บลง cache
-  memberCache = members;
+  memberCache       = members;
+  memberByDiscordId = new Map(members.filter(m => m.discordId).map(m => [m.discordId, m]));
   cacheTime = Date.now();
 
   return members;
+}
+
+// ดึงรายชื่อจาก Tab "Member List" (ใช้กับ autocomplete ของ /เปลี่ยนชื่อ, /เปลี่ยนอาชีพ)
+async function getMembers() {
+  return loadMembers();
+}
+
+// หาสมาชิกจาก discord_id (ใช้กับ /stats — 1 discord_id ผูกกับสมาชิกเดียวเสมอ
+// จึงไม่ต้องให้ผู้ใช้เลือกชื่อเอง กัน mismatch ระหว่าง discord_id กับตัวละครที่เลือก)
+async function getMemberByDiscordId(discordId) {
+  await loadMembers();
+  return memberByDiscordId.get(discordId) || null;
 }
 
 // บันทึก Stats ลง stats_log
@@ -164,5 +179,5 @@ async function markNotified(rowNum) {
   });
 }
 
-module.exports = { appendToSheet, getMembers, writeStatsToSheet, getUnnotifiedReviews, markNotified };
+module.exports = { appendToSheet, getMembers, getMemberByDiscordId, writeStatsToSheet, getUnnotifiedReviews, markNotified };
 
