@@ -14,28 +14,25 @@ const { appendToSheet, getMembers, getMemberByDiscordId, writeStatsToSheet, getU
 const { analyzeImage } = require('./vision');
 
 // Biochemist / Rebellion / Doram แยกสาย เพราะวิธีส่งค่า stats ไม่เหมือนกัน
-// เก็บเป็นชื่ออาชีพรวมสาย (เช่น "Doram-Support") ใช้ค่านี้ตลอดทั้งระบบ —
+// /เปลี่ยนอาชีพ เลือกอาชีพก่อน (ขั้น 1) ถ้ามี subJobs จะถามสายต่อ (ขั้น 2)
+// ชื่อที่บันทึกจริงจะรวมสาย เช่น "Doram-Support" ใช้ค่านี้ตลอดทั้งระบบ —
 // Member List คอลัมน์ Class, stats_log, และเกณฑ์ต่ออาชีพใน roo-manager ต้องตรงกัน
-const CLASS_LIST = [
-  { label: 'Champion',               value: 'champion'                },
-  { label: 'High Priest',            value: 'high_priest'             },
-  { label: 'Sniper',                 value: 'sniper'                  },
-  { label: 'High Wizard',            value: 'high_wizard'             },
-  { label: 'Lord Knight',            value: 'lord_knight'             },
-  { label: 'Assassin Cross',         value: 'assassin_cross'          },
-  { label: 'Paladin',                value: 'paladin'                 },
-  { label: 'Mastersmith',            value: 'mastersmith'             },
-  { label: 'Biochemist-MAGIC',       value: 'biochemist_magic'        },
-  { label: 'Biochemist-PHYS',        value: 'biochemist_phys'         },
-  { label: 'Minstrel',               value: 'minstrel'                },
-  { label: 'Gypsy',                  value: 'gypsy'                   },
-  { label: 'Professor',              value: 'professor'               },
-  { label: 'Stalker',                value: 'stalker'                 },
-  { label: 'Rebellion-DPSwithSHIELD', value: 'rebellion_dps_shield'   },
-  { label: 'Rebellion-DPS',          value: 'rebellion_dps'           },
-  { label: 'Doram-MAGIC',            value: 'doram_magic'             },
-  { label: 'Doram-PHYS',             value: 'doram_phys'              },
-  { label: 'Doram-Support',          value: 'doram_support'           },
+const CLASS_TREE = [
+  { label: 'Champion',       value: 'champion'       },
+  { label: 'High Priest',    value: 'high_priest'    },
+  { label: 'Sniper',         value: 'sniper'         },
+  { label: 'High Wizard',    value: 'high_wizard'    },
+  { label: 'Lord Knight',    value: 'lord_knight'    },
+  { label: 'Assassin Cross', value: 'assassin_cross' },
+  { label: 'Paladin',        value: 'paladin'        },
+  { label: 'Mastersmith',    value: 'mastersmith'    },
+  { label: 'Biochemist',     value: 'biochemist',    subJobs: ['MAGIC', 'PHYS'] },
+  { label: 'Minstrel',       value: 'minstrel'       },
+  { label: 'Gypsy',          value: 'gypsy'          },
+  { label: 'Professor',      value: 'professor'      },
+  { label: 'Stalker',        value: 'stalker'        },
+  { label: 'Rebellion',      value: 'rebellion',     subJobs: ['DPSwithSHIELD', 'DPS'] },
+  { label: 'Doram',          value: 'doram',         subJobs: ['MAGIC', 'PHYS', 'Support'] },
 ];
 
 const pendingClassChange = new Map();
@@ -43,6 +40,33 @@ const pendingUpload      = new Map();
 // pendingUpload structure:
 // { charName, charClass, discordId, channelId, expiresAt, step, general, quasi, special, notice }
 const SESSION_TTL_MS = 10 * 60 * 1000; // session หมดอายุเมื่อไม่มีการส่งรูปเกิน 10 นาที
+
+// ── /เปลี่ยนอาชีพ: บันทึกผลตอนจบ (ใช้ร่วมกันทั้งเคสมีสายและไม่มีสาย) ──
+async function finalizeClassChange(interaction, pending, newLabel) {
+  const { charName, oldClass } = pending;
+  const discordId = interaction.user.id;
+  const username   = interaction.user.username;
+  const timestamp  = new Date().toLocaleString('th-TH', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+
+  pendingClassChange.delete(discordId);
+
+  await appendToSheet([
+    timestamp, discordId, username,
+    'อาชีพ', `${charName} (${oldClass})`, `${charName} (${newLabel})`
+  ]);
+
+  await interaction.update({
+    content:
+      `✅ **บันทึกแล้ว!**\n` +
+      `👤 ${username} — ตัวละคร: **${charName}**\n` +
+      `⚔️ **อาชีพ:** \`${oldClass}\` → \`${newLabel}\``,
+    components: [],
+  });
+}
 
 // ── ISO Week helper ──
 function getISOWeekLabel() {
@@ -282,7 +306,7 @@ client.on('interactionCreate', async (interaction) => {
     });
   }
 
-  // ── /เปลี่ยนอาชีพ ──
+  // ── /เปลี่ยนอาชีพ — ขั้น 1: เลือกอาชีพ ──
   if (interaction.isChatInputCommand() && interaction.commandName === 'เปลี่ยนอาชีพ') {
     const charName = interaction.options.getString('ชื่อตัวละคร');
 
@@ -292,17 +316,15 @@ client.on('interactionCreate', async (interaction) => {
 
     pendingClassChange.set(interaction.user.id, { charName, oldClass: currentClass });
 
-    const selectNewClass = new StringSelectMenuBuilder()
+    const selectClass = new StringSelectMenuBuilder()
       .setCustomId('select_new_class')
       .setPlaceholder('เลือกอาชีพใหม่ที่ต้องการ')
       .addOptions(
-        CLASS_LIST
-          .filter(c => c.label !== currentClass)
-          .map(c =>
-            new StringSelectMenuOptionBuilder()
-              .setLabel(c.label)
-              .setValue(c.value)
-          )
+        CLASS_TREE.map(c =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(c.label)
+            .setValue(c.value)
+        )
       );
 
     await interaction.reply({
@@ -310,40 +332,49 @@ client.on('interactionCreate', async (interaction) => {
         `**ตัวละคร:** ${charName}\n` +
         `**อาชีพปัจจุบัน:** ${currentClass}\n` +
         `ต้องการเปลี่ยนเป็นอาชีพอะไร?`,
-      components: [new ActionRowBuilder().addComponents(selectNewClass)],
+      components: [new ActionRowBuilder().addComponents(selectClass)],
       flags: 64,
     });
   }
 
-  // เลือกอาชีพใหม่แล้ว → บันทึก
+  // ── /เปลี่ยนอาชีพ — ขั้น 1 เสร็จ: ถ้าอาชีพนี้มีสาย ถามสายต่อ (ขั้น 2) ไม่มีก็บันทึกเลย ──
   if (interaction.isStringSelectMenu() && interaction.customId === 'select_new_class') {
-    const newClassValue = interaction.values[0];
-    const newLabel      = CLASS_LIST.find(c => c.value === newClassValue).label;
-    const pending       = pendingClassChange.get(interaction.user.id);
-    const charName      = pending?.charName || 'ไม่ทราบ';
-    const oldClass      = pending?.oldClass || 'ไม่ทราบ';
-    const discordId     = interaction.user.id;
-    const username      = interaction.user.username;
-    const timestamp     = new Date().toLocaleString('th-TH', {
-      timeZone: 'Asia/Bangkok',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit',
-    });
+    const chosen  = CLASS_TREE.find(c => c.value === interaction.values[0]);
+    const pending = pendingClassChange.get(interaction.user.id);
+    if (!chosen || !pending) return;
 
-    pendingClassChange.delete(interaction.user.id);
+    if (chosen.subJobs) {
+      pending.pendingBase = chosen.label; // ยังไม่บันทึก รอเลือกสายก่อน
+      pendingClassChange.set(interaction.user.id, pending);
 
-    await appendToSheet([
-      timestamp, discordId, username,
-      'อาชีพ', `${charName} (${oldClass})`, `${charName} (${newLabel})`
-    ]);
+      const selectSubJob = new StringSelectMenuBuilder()
+        .setCustomId('select_new_subjob')
+        .setPlaceholder(`เลือกสายของ ${chosen.label}`)
+        .addOptions(
+          chosen.subJobs.map(s =>
+            new StringSelectMenuOptionBuilder().setLabel(s).setValue(s)
+          )
+        );
 
-    await interaction.update({
-      content:
-        `✅ **บันทึกแล้ว!**\n` +
-        `👤 ${username} — ตัวละคร: **${charName}**\n` +
-        `⚔️ **อาชีพ:** \`${oldClass}\` → \`${newLabel}\``,
-      components: [],
-    });
+      await interaction.update({
+        content:
+          `**ตัวละคร:** ${pending.charName}\n` +
+          `**อาชีพปัจจุบัน:** ${pending.oldClass}\n` +
+          `**อาชีพใหม่:** ${chosen.label}\n` +
+          `${chosen.label} มีหลายสาย เลือกสายที่ต้องการด้วยครับ`,
+        components: [new ActionRowBuilder().addComponents(selectSubJob)],
+      });
+      return;
+    }
+
+    await finalizeClassChange(interaction, pending, chosen.label);
+  }
+
+  // ── /เปลี่ยนอาชีพ — ขั้น 2: เลือกสายแล้ว → บันทึก ──
+  if (interaction.isStringSelectMenu() && interaction.customId === 'select_new_subjob') {
+    const pending = pendingClassChange.get(interaction.user.id);
+    if (!pending?.pendingBase) return;
+    await finalizeClassChange(interaction, pending, `${pending.pendingBase}-${interaction.values[0]}`);
   }
 
   // ── /upload-stats ──
