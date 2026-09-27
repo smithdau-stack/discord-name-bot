@@ -13,22 +13,29 @@ const {
 const { appendToSheet, getMembers, getMemberByDiscordId, writeStatsToSheet, getUnnotifiedReviews, markNotified } = require('./sheets');
 const { analyzeImage } = require('./vision');
 
+// Biochemist / Rebellion / Doram แยกสาย เพราะวิธีส่งค่า stats ไม่เหมือนกัน
+// เก็บเป็นชื่ออาชีพรวมสาย (เช่น "Doram-Support") ใช้ค่านี้ตลอดทั้งระบบ —
+// Member List คอลัมน์ Class, stats_log, และเกณฑ์ต่ออาชีพใน roo-manager ต้องตรงกัน
 const CLASS_LIST = [
-  { label: 'Champion',       value: 'champion'       },
-  { label: 'High Priest',    value: 'high_priest'    },
-  { label: 'Sniper',         value: 'sniper'         },
-  { label: 'High Wizard',    value: 'high_wizard'    },
-  { label: 'Lord Knight',    value: 'lord_knight'    },
-  { label: 'Assassin Cross', value: 'assassin_cross' },
-  { label: 'Paladin',        value: 'paladin'        },
-  { label: 'Mastersmith',    value: 'mastersmith'    },
-  { label: 'Biochemist',     value: 'biochemist'     },
-  { label: 'Minstrel',       value: 'minstrel'       },
-  { label: 'Gypsy',          value: 'gypsy'          },
-  { label: 'Professor',      value: 'professor'      },
-  { label: 'Stalker',        value: 'stalker'        },
-  { label: 'Rebellion',      value: 'rebellion'      },
-  { label: 'Doram',          value: 'doram'          },
+  { label: 'Champion',               value: 'champion'                },
+  { label: 'High Priest',            value: 'high_priest'             },
+  { label: 'Sniper',                 value: 'sniper'                  },
+  { label: 'High Wizard',            value: 'high_wizard'             },
+  { label: 'Lord Knight',            value: 'lord_knight'             },
+  { label: 'Assassin Cross',         value: 'assassin_cross'          },
+  { label: 'Paladin',                value: 'paladin'                 },
+  { label: 'Mastersmith',            value: 'mastersmith'             },
+  { label: 'Biochemist-MAGIC',       value: 'biochemist_magic'        },
+  { label: 'Biochemist-PHYS',        value: 'biochemist_phys'         },
+  { label: 'Minstrel',               value: 'minstrel'                },
+  { label: 'Gypsy',                  value: 'gypsy'                   },
+  { label: 'Professor',              value: 'professor'               },
+  { label: 'Stalker',                value: 'stalker'                 },
+  { label: 'Rebellion-DPSwithSHIELD', value: 'rebellion_dps_shield'   },
+  { label: 'Rebellion-DPS',          value: 'rebellion_dps'           },
+  { label: 'Doram-MAGIC',            value: 'doram_magic'             },
+  { label: 'Doram-PHYS',             value: 'doram_phys'              },
+  { label: 'Doram-Support',          value: 'doram_support'           },
 ];
 
 const pendingClassChange = new Map();
