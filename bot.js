@@ -2,6 +2,7 @@ require('dotenv').config();
 const {
   Client,
   GatewayIntentBits,
+  Partials,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -51,7 +52,9 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-  ]
+    GatewayIntentBits.DirectMessages, // ต้องมี ไม่งั้น messageCreate จะไม่ยิงสำหรับ DM
+  ],
+  partials: [Partials.Channel], // DM channel ที่ยังไม่ cache จะมาเป็น partial ต้องเปิดรับไว้
 });
 
 client.once('clientReady', () => {
@@ -351,12 +354,27 @@ client.on('interactionCreate', async (interaction) => {
     const charName  = member.name;
     const charClass = member.currentClass;
 
-    // เริ่ม session ใหม่
+    // ทำขั้นตอนส่งรูปทั้งหมดใน DM แทนห้องเซิร์ฟเวอร์ กันไม่ให้คนอื่นในห้องเห็นรูป/ข้อความรกๆ 4 รูปต่อคน
+    let dm;
+    try {
+      dm = await interaction.user.createDM();
+    } catch (err) {
+      console.error(`[stats] createDM failed for ${interaction.user.id}:`, err.message);
+    }
+    if (!dm) {
+      await interaction.reply({
+        content: `❌ เปิด DM กับบอทไม่ได้ครับ กรุณาเปิดรับ Direct Message จากสมาชิกเซิร์ฟเวอร์นี้ก่อน (ตั้งค่าความเป็นส่วนตัวของเซิร์ฟเวอร์) แล้วลองใหม่`,
+        flags: 64,
+      });
+      return;
+    }
+
+    // เริ่ม session ใหม่ — ผูกกับห้อง DM แทนห้องที่พิมพ์คำสั่ง
     pendingUpload.set(interaction.user.id, {
       charName,
       charClass,
       discordId: interaction.user.id,
-      channelId: interaction.channelId,
+      channelId: dm.id,
       expiresAt: Date.now() + SESSION_TTL_MS,
       step:    'general',
       general: null,
@@ -365,12 +383,25 @@ client.on('interactionCreate', async (interaction) => {
       notice:  null,
     });
 
-    await interaction.reply({
-      content:
+    try {
+      await dm.send(
         `📊 **Upload Stats ประจำสัปดาห์**\n` +
         `👤 **${charName}** (${charClass}) | ${getISOWeekLabel()}\n\n` +
         `**Step 1/4** — ส่งรูป 📷 **General Stats** มาเลยครับ\n` +
-        `_(แนบรูปภาพใน message ถัดไปได้เลย)_`,
+        `_(แนบรูปภาพใน message ถัดไปได้เลย)_`
+      );
+    } catch (err) {
+      console.error(`[stats] dm.send failed for ${interaction.user.id}:`, err.message);
+      pendingUpload.delete(interaction.user.id);
+      await interaction.reply({
+        content: `❌ ส่งข้อความ DM ไม่สำเร็จครับ กรุณาเปิดรับ Direct Message จากสมาชิกเซิร์ฟเวอร์นี้ก่อน แล้วลองใหม่`,
+        flags: 64,
+      });
+      return;
+    }
+
+    await interaction.reply({
+      content: `📬 เช็ค DM จากบอทได้เลยครับ! (หาไม่เจอลองดูที่ Message Requests)`,
       flags: 64,
     });
   }
