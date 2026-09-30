@@ -3,70 +3,14 @@ const {
   Client,
   GatewayIntentBits,
   Partials,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder,
 } = require('discord.js');
-const { appendToSheet, getMembers, getMemberByDiscordId, writeStatsToSheet, getUnnotifiedReviews, markNotified } = require('./sheets');
+const { getMemberByDiscordId, writeStatsToSheet, getUnnotifiedReviews, markNotified } = require('./sheets');
 const { analyzeImage } = require('./vision');
 
-// Biochemist / Rebellion / Doram แยกสาย เพราะวิธีส่งค่า stats ไม่เหมือนกัน
-// /เปลี่ยนอาชีพ เลือกอาชีพก่อน (ขั้น 1) ถ้ามี subJobs จะถามสายต่อ (ขั้น 2)
-// ชื่อที่บันทึกจริงจะรวมสาย เช่น "Doram-Support" ใช้ค่านี้ตลอดทั้งระบบ —
-// Member List คอลัมน์ Class, stats_log, และเกณฑ์ต่ออาชีพใน roo-manager ต้องตรงกัน
-const CLASS_TREE = [
-  { label: 'Champion',       value: 'champion'       },
-  { label: 'High Priest',    value: 'high_priest'    },
-  { label: 'Sniper',         value: 'sniper'         },
-  { label: 'High Wizard',    value: 'high_wizard'    },
-  { label: 'Lord Knight',    value: 'lord_knight'    },
-  { label: 'Assassin Cross', value: 'assassin_cross' },
-  { label: 'Paladin',        value: 'paladin'        },
-  { label: 'Mastersmith',    value: 'mastersmith'    },
-  { label: 'Biochemist',     value: 'biochemist',    subJobs: ['MAGIC', 'PHYS'] },
-  { label: 'Minstrel',       value: 'minstrel'       },
-  { label: 'Gypsy',          value: 'gypsy'          },
-  { label: 'Professor',      value: 'professor'      },
-  { label: 'Stalker',        value: 'stalker'        },
-  { label: 'Rebellion',      value: 'rebellion',     subJobs: ['DPSwithSHIELD', 'DPS'] },
-  { label: 'Doram',          value: 'doram',         subJobs: ['MAGIC', 'PHYS', 'Support'] },
-];
-
-const pendingClassChange = new Map();
 const pendingUpload      = new Map();
 // pendingUpload structure:
 // { charName, charClass, discordId, channelId, expiresAt, step, general, quasi, special, notice }
 const SESSION_TTL_MS = 10 * 60 * 1000; // session หมดอายุเมื่อไม่มีการส่งรูปเกิน 10 นาที
-
-// ── /เปลี่ยนอาชีพ: บันทึกผลตอนจบ (ใช้ร่วมกันทั้งเคสมีสายและไม่มีสาย) ──
-async function finalizeClassChange(interaction, pending, newLabel) {
-  const { charName, oldClass } = pending;
-  const discordId = interaction.user.id;
-  const username   = interaction.user.username;
-  const timestamp  = new Date().toLocaleString('th-TH', {
-    timeZone: 'Asia/Bangkok',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit',
-  });
-
-  pendingClassChange.delete(discordId);
-
-  await appendToSheet([
-    timestamp, discordId, username,
-    'อาชีพ', `${charName} (${oldClass})`, `${charName} (${newLabel})`
-  ]);
-
-  await interaction.update({
-    content:
-      `✅ **บันทึกแล้ว!**\n` +
-      `👤 ${username} — ตัวละคร: **${charName}**\n` +
-      `⚔️ **อาชีพ:** \`${oldClass}\` → \`${newLabel}\``,
-    components: [],
-  });
-}
 
 // ── ISO Week helper ──
 function getISOWeekLabel() {
@@ -245,138 +189,6 @@ client.on('messageCreate', async (message) => {
 // ── Slash Commands & Interactions ──
 client.on('interactionCreate', async (interaction) => {
 
-  // ── Autocomplete ──
-  if (interaction.isAutocomplete()) {
-    const members = await getMembers();
-    const typed   = interaction.options.getFocused().toLowerCase();
-
-    const filtered = members
-      .filter(m => m.name.toLowerCase().includes(typed))
-      .slice(0, 25)
-      .map(m => ({
-        name:  `${m.name} (${m.currentClass})`,
-        value: m.name,
-      }));
-
-    await interaction.respond(filtered);
-    return;
-  }
-
-  // ── /เปลี่ยนชื่อ ──
-  if (interaction.isChatInputCommand() && interaction.commandName === 'เปลี่ยนชื่อ') {
-    const oldName = interaction.options.getString('ชื่อเก่า');
-
-    const modal = new ModalBuilder()
-      .setCustomId(`modal_new_name__${oldName}`)
-      .setTitle('📝 เปลี่ยนชื่อในเกม');
-
-    const newInput = new TextInputBuilder()
-      .setCustomId('new_name')
-      .setLabel(`ชื่อใหม่  (เก่า: ${oldName})`)
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('กรอกชื่อใหม่ที่ต้องการ')
-      .setRequired(true);
-
-    modal.addComponents(new ActionRowBuilder().addComponents(newInput));
-    await interaction.showModal(modal);
-  }
-
-  // Modal Submit เปลี่ยนชื่อ
-  if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_new_name__')) {
-    const oldName   = interaction.customId.replace('modal_new_name__', '');
-    const newName   = interaction.fields.getTextInputValue('new_name');
-    const discordId = interaction.user.id;
-    const username  = interaction.user.username;
-    const timestamp = new Date().toLocaleString('th-TH', {
-      timeZone: 'Asia/Bangkok',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit',
-    });
-
-    await appendToSheet([
-      timestamp, discordId, username,
-      'ชื่อ', oldName, newName
-    ]);
-
-    await interaction.reply({
-      content:
-        `✅ **บันทึกแล้ว!**\n` +
-        `👤 ${username}\n` +
-        `📝 **ชื่อ:** \`${oldName}\` → \`${newName}\``,
-    });
-  }
-
-  // ── /เปลี่ยนอาชีพ — ขั้น 1: เลือกอาชีพ ──
-  if (interaction.isChatInputCommand() && interaction.commandName === 'เปลี่ยนอาชีพ') {
-    const charName = interaction.options.getString('ชื่อตัวละคร');
-
-    const members      = await getMembers();
-    const charData     = members.find(m => m.name === charName);
-    const currentClass = charData?.currentClass || 'ไม่ระบุ';
-
-    pendingClassChange.set(interaction.user.id, { charName, oldClass: currentClass });
-
-    const selectClass = new StringSelectMenuBuilder()
-      .setCustomId('select_new_class')
-      .setPlaceholder('เลือกอาชีพใหม่ที่ต้องการ')
-      .addOptions(
-        CLASS_TREE.map(c =>
-          new StringSelectMenuOptionBuilder()
-            .setLabel(c.label)
-            .setValue(c.value)
-        )
-      );
-
-    await interaction.reply({
-      content:
-        `**ตัวละคร:** ${charName}\n` +
-        `**อาชีพปัจจุบัน:** ${currentClass}\n` +
-        `ต้องการเปลี่ยนเป็นอาชีพอะไร?`,
-      components: [new ActionRowBuilder().addComponents(selectClass)],
-      flags: 64,
-    });
-  }
-
-  // ── /เปลี่ยนอาชีพ — ขั้น 1 เสร็จ: ถ้าอาชีพนี้มีสาย ถามสายต่อ (ขั้น 2) ไม่มีก็บันทึกเลย ──
-  if (interaction.isStringSelectMenu() && interaction.customId === 'select_new_class') {
-    const chosen  = CLASS_TREE.find(c => c.value === interaction.values[0]);
-    const pending = pendingClassChange.get(interaction.user.id);
-    if (!chosen || !pending) return;
-
-    if (chosen.subJobs) {
-      pending.pendingBase = chosen.label; // ยังไม่บันทึก รอเลือกสายก่อน
-      pendingClassChange.set(interaction.user.id, pending);
-
-      const selectSubJob = new StringSelectMenuBuilder()
-        .setCustomId('select_new_subjob')
-        .setPlaceholder(`เลือกสายของ ${chosen.label}`)
-        .addOptions(
-          chosen.subJobs.map(s =>
-            new StringSelectMenuOptionBuilder().setLabel(s).setValue(s)
-          )
-        );
-
-      await interaction.update({
-        content:
-          `**ตัวละคร:** ${pending.charName}\n` +
-          `**อาชีพปัจจุบัน:** ${pending.oldClass}\n` +
-          `**อาชีพใหม่:** ${chosen.label}\n` +
-          `${chosen.label} มีหลายสาย เลือกสายที่ต้องการด้วยครับ`,
-        components: [new ActionRowBuilder().addComponents(selectSubJob)],
-      });
-      return;
-    }
-
-    await finalizeClassChange(interaction, pending, chosen.label);
-  }
-
-  // ── /เปลี่ยนอาชีพ — ขั้น 2: เลือกสายแล้ว → บันทึก ──
-  if (interaction.isStringSelectMenu() && interaction.customId === 'select_new_subjob') {
-    const pending = pendingClassChange.get(interaction.user.id);
-    if (!pending?.pendingBase) return;
-    await finalizeClassChange(interaction, pending, `${pending.pendingBase}-${interaction.values[0]}`);
-  }
-
   // ── /upload-stats ──
   if (interaction.isChatInputCommand() && interaction.commandName === 'stats') {
     // หาตัวละครจาก discord_id ของคนพิมพ์คำสั่งเอง (1 discord_id = 1 สมาชิกเสมอ)
@@ -384,7 +196,7 @@ client.on('interactionCreate', async (interaction) => {
     const member = await getMemberByDiscordId(interaction.user.id);
     if (!member) {
       await interaction.reply({
-        content: `❌ ไม่พบชื่อของคุณใน Member List ครับ\nกรุณาติดต่อแอดมินให้เพิ่มชื่อ + discord_id ในชีทก่อน`,
+        content: `❌ ไม่พบตัวละครของคุณในรายชื่อสมาชิกกิลครับ\nกรุณาสร้างตัวละครที่หน้าเว็บ (เมนู 🧑 ตัวละครของฉัน) แล้วรอแอดมินอนุมัติก่อน`,
         flags: 64,
       });
       return;

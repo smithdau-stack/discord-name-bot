@@ -15,27 +15,24 @@ async function getSheetAuth() {
   return auth;
 }
 
-// บันทึก Log
-async function appendToSheet(rowData) {
-  const auth   = await getSheetAuth();
-  const sheets = google.sheets({ version: 'v4', auth });
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId:    process.env.SPREADSHEET_ID,
-    range:            'Log!A:F',
-    valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [rowData] },
-  });
-
-  console.log('บันทึกลง Sheet สำเร็จ:', rowData);
-}
-
-// ── Cache สำหรับ Member List ──
-// Member List: A=Name, B=Class JOB, C=Emblem, D=discord_id (1 discord_id = 1 สมาชิกเสมอ)
+// ── Cache สำหรับรายชื่อสมาชิก ──
+// ตัวจริงอยู่ใน Supabase ตาราง members (จัดการผ่านหน้าเว็บ roo-manager/members.html)
+// แท็บ Member List ในชีตเป็นแค่สำเนาที่เว็บเขียนทับให้ ห้ามแก้ในชีตโดยตรง
 let memberCache       = null; // [{ name, currentClass, discordId }]
 let memberByDiscordId = null; // Map<discordId, member>
 let cacheTime = 0;
 const CACHE_TTL = 60 * 1000; // 60 วินาที
+
+async function fetchMembersFromSupabase() {
+  const url = `${process.env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/members?select=discord_id,name,class&status=eq.active&order=name.asc`;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const headers = { apikey: key };
+  // key แบบใหม่ (sb_secret_...) ไม่ใช่ JWT ใส่ใน Authorization ไม่ได้ — ใส่เฉพาะ legacy (eyJ...)
+  if (key.startsWith('eyJ')) headers.Authorization = `Bearer ${key}`;
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new Error(`Supabase members → ${res.status}: ${await res.text()}`);
+  return res.json();
+}
 
 async function loadMembers() {
   // ถ้ามี cache และยังไม่หมดอายุ → ใช้ของเก่า
@@ -43,24 +40,21 @@ async function loadMembers() {
     return memberCache;
   }
 
-  const auth   = await getSheetAuth();
-  const sheets = google.sheets({ version: 'v4', auth });
+  let rows;
+  try {
+    rows = await fetchMembersFromSupabase();
+  } catch (e) {
+    // Supabase ล่ม → ใช้ cache เก่าต่อไปก่อน ดีกว่าบอทใช้งานไม่ได้เลย
+    if (memberCache) { console.error('[loadMembers] ใช้ cache เก่า:', e.message); return memberCache; }
+    throw e;
+  }
+  console.log('ดึงรายชื่อสมาชิกได้:', rows.length, 'คน');
 
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.SPREADSHEET_ID,
-    range:         "'Member List'!A2:D",
-  });
-
-  const rows = res.data.values || [];
-  console.log('ดึงข้อมูลได้:', rows.length, 'แถว');
-
-  const members = rows
-    .filter(row => row[0] && row[0].trim() !== '')
-    .map(row => ({
-      name:         row[0].trim(),
-      currentClass: row[1]?.trim() || 'ไม่ระบุ',
-      discordId:    row[3]?.trim() || '',
-    }));
+  const members = rows.map(r => ({
+    name:         r.name,
+    currentClass: r.class || 'ไม่ระบุ',
+    discordId:    r.discord_id,
+  }));
 
   // เก็บลง cache
   memberCache       = members;
@@ -68,11 +62,6 @@ async function loadMembers() {
   cacheTime = Date.now();
 
   return members;
-}
-
-// ดึงรายชื่อจาก Tab "Member List" (ใช้กับ autocomplete ของ /เปลี่ยนชื่อ, /เปลี่ยนอาชีพ)
-async function getMembers() {
-  return loadMembers();
 }
 
 // หาสมาชิกจาก discord_id (ใช้กับ /stats — 1 discord_id ผูกกับสมาชิกเดียวเสมอ
@@ -179,5 +168,5 @@ async function markNotified(rowNum) {
   });
 }
 
-module.exports = { appendToSheet, getMembers, getMemberByDiscordId, writeStatsToSheet, getUnnotifiedReviews, markNotified };
+module.exports = { getMemberByDiscordId, writeStatsToSheet, getUnnotifiedReviews, markNotified };
 

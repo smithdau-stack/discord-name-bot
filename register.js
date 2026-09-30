@@ -1,30 +1,11 @@
 require('dotenv').config();
 const { REST, Routes, SlashCommandBuilder } = require('discord.js');
 
+// ชื่อ/อาชีพ แก้ที่หน้าเว็บ (ตัวละครของฉัน) — รันไฟล์นี้แล้ว /เปลี่ยนชื่อ /เปลี่ยนอาชีพ จะหายจาก Discord
 const commands = [
   new SlashCommandBuilder()
-    .setName('เปลี่ยนชื่อ')
-    .setDescription('แจ้งเปลี่ยนชื่อตัวละครในเกม')
-    .addStringOption(option =>
-      option
-        .setName('ชื่อเก่า')
-        .setDescription('ชื่อตัวละครปัจจุบัน')
-        .setRequired(true)
-        .setAutocomplete(true)
-    ),
-  new SlashCommandBuilder()
-    .setName('เปลี่ยนอาชีพ')
-    .setDescription('แจ้งเปลี่ยนอาชีพตัวละครในเกม')
-    .addStringOption(option =>
-      option
-        .setName('ชื่อตัวละคร')
-        .setDescription('ชื่อตัวละครของคุณ')
-        .setRequired(true)
-        .setAutocomplete(true)
-    ),
-  new SlashCommandBuilder()
     .setName('stats')
-    .setDescription('อัปโหลด Stats ตัวละครประจำสัปดาห์ (ตัวละครดึงจาก Member List อัตโนมัติตาม Discord ของคุณ)'),
+    .setDescription('อัปโหลด Stats ตัวละครประจำสัปดาห์ (ตัวละครดึงจากรายชื่อสมาชิกตาม Discord ของคุณ)'),
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
