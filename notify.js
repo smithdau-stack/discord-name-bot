@@ -64,7 +64,9 @@ async function weeklyStatsReminder(client, now = new Date()) {
 
 // ── แจ้งเมื่อเปิดการแจก: คำนวณแบบเดียวกับหน้าคิว (เรียงรอบ → ลำดับ, ต่อคนไม่เกิน cap) ──
 async function dropOpenedNotify(client) {
-  const drops = await rest('feather_drops?select=id,kind,total_white,total_red,cap_white,cap_red&status=eq.open');
+  // เฉพาะการแจกที่เพิ่งเปิด (6 ชม.) — กันบอทรีสตาร์ท/deploy แล้วไล่ DM การแจกเก่าที่ดึงกันไปแล้ว
+  const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
+  const drops = await rest(`feather_drops?select=id,kind,total_white,total_red,cap_white,cap_red&status=eq.open&created_at=gte.${encodeURIComponent(since)}`);
   for (const d of drops) {
     const single = d.kind === 'card';
     const rounds = await rest(`feather_rounds?select=id,no&kind=eq.${d.kind}&order=no.asc`);
