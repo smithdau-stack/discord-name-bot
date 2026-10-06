@@ -1,12 +1,12 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
 const { getUnnotifiedReviews, markNotified } = require('./db');
-const { weeklyStatsReminder, dropOpenedNotify } = require('./notify');
+const { weeklyStatsReminder } = require('./notify');
 
 // ส่ง Stats ย้ายไปหน้าเว็บ (Guild Hub → Submit stats) แล้ว — บอทเหลือหน้าที่ DM แจ้งผลรีวิว
 const HUB_URL = 'https://roo-manager.vercel.app/#stats';
 const REVIEW_POLL_MS = 2 * 60 * 1000;
-const REMINDER_POLL_MS = 15 * 60 * 1000;   // เตือนส่ง Stats: เช็คทุก 15 นาที (ส่งจริงเฉพาะอาทิตย์ 18:00+ และคนละครั้ง)
+const REMINDER_POLL_MS = 15 * 60 * 1000;   // เตือนส่ง Stats: เช็คทุก 15 นาที (ส่งจริงเฉพาะ จันทร์/อังคาร 18:00+ วันละครั้ง)
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -14,8 +14,6 @@ client.once('clientReady', () => {
   console.log(`Bot พร้อมแล้ว: ${client.user.tag}`);
   notifyReviewResults();
   setInterval(notifyReviewResults, REVIEW_POLL_MS);
-  runSafe('drop', () => dropOpenedNotify(client));
-  setInterval(() => runSafe('drop', () => dropOpenedNotify(client)), REVIEW_POLL_MS);
   runSafe('reminder', () => weeklyStatsReminder(client));
   setInterval(() => runSafe('reminder', () => weeklyStatsReminder(client)), REMINDER_POLL_MS);
 });

@@ -1,4 +1,4 @@
-// DM แจ้งเตือนลูกกิล: เตือนส่ง Stats (อาทิตย์เย็น) + แจ้งเมื่อเปิดการแจกขนนก/การ์ด
+// DM เตือนลูกกิลที่ยังไม่ส่ง Stats: จันทร์ + อังคาร 18:00 (เวลาไทย) วันละครั้ง
 // ส่งคนละครั้งเท่านั้น: จองแถวใน notify_log ก่อนส่ง (ถ้ามีแล้ว = เคยส่ง ข้าม)
 const HUB = 'https://roo-manager.vercel.app';
 
@@ -43,11 +43,13 @@ async function dm(client, discordId, text, label) {
   }
 }
 
-// ── เตือนส่ง Stats: อาทิตย์ 18:00 เป็นต้นไป (เวลาไทย = 11:00 UTC) ใครยังไม่มีรายการสัปดาห์นี้ (ไม่นับที่ถูก Reject) ──
+// ── เตือนส่ง Stats: จันทร์/อังคาร 18:00 เป็นต้นไป (เวลาไทย = 11:00 UTC) ใครยังไม่มีรายการสัปดาห์นี้ (ไม่นับที่ถูก Reject) ──
 async function weeklyStatsReminder(client, now = new Date()) {
   const th = new Date(now.getTime() + 7 * 3600 * 1000);   // เวลาไทย
-  if (th.getUTCDay() !== 0 || th.getUTCHours() < 18) return;
+  const day = th.getUTCDay();   // 1 = จันทร์, 2 = อังคาร
+  if ((day !== 1 && day !== 2) || th.getUTCHours() < 18) return;
   const week = isoWeek(now);
+  const key = `${week}-${day === 1 ? 'mon' : 'tue'}`;   // วันละครั้ง
   const [members, subs] = await Promise.all([
     rest('members?select=discord_id,name&status=eq.active'),
     rest(`stats_submissions?select=discord_id&week=eq.${encodeURIComponent(week)}&status=neq.rejected`),
@@ -55,53 +57,11 @@ async function weeklyStatsReminder(client, now = new Date()) {
   const done = new Set(subs.map((s) => s.discord_id));
   for (const m of members) {
     if (done.has(m.discord_id) || !/^\d{17,20}$/.test(m.discord_id)) continue;
-    if (!(await claim('stats_reminder', m.discord_id, week))) continue;
+    if (!(await claim('stats_reminder', m.discord_id, key))) continue;
     await dm(client, m.discord_id,
       `⏰ สวัสดี **${m.name}** — สัปดาห์นี้คุณยังไม่ได้ส่ง Stats\nส่งได้ที่ ${HUB}/#stats (ใช้รูป 4 รูป ไม่ถึง 2 นาที)`,
-      `stats reminder ${week}`);
+      `stats reminder ${key}`);
   }
 }
 
-// ── แจ้งเมื่อเปิดการแจก: คำนวณแบบเดียวกับหน้าคิว (เรียงรอบ → ลำดับ, ต่อคนไม่เกิน cap) ──
-async function dropOpenedNotify(client) {
-  // เฉพาะการแจกที่เพิ่งเปิด (6 ชม.) — กันบอทรีสตาร์ท/deploy แล้วไล่ DM การแจกเก่าที่ดึงกันไปแล้ว
-  const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
-  const drops = await rest(`feather_drops?select=id,kind,total_white,total_red,cap_white,cap_red&status=eq.open&created_at=gte.${encodeURIComponent(since)}`);
-  for (const d of drops) {
-    const single = d.kind === 'card';
-    const rounds = await rest(`feather_rounds?select=id,no&kind=eq.${d.kind}&order=no.asc`);
-    if (!rounds.length) continue;
-    const entries = await rest(`feather_entries?select=id,round_id,position,discord_id,want_white,want_red,got_white,got_red&round_id=in.(${rounds.map((r) => r.id).join(',')})`);
-    const no = new Map(rounds.map((r) => [r.id, r.no]));
-    entries.sort((a, b) => no.get(a.round_id) - no.get(b.round_id) || a.position - b.position);
-    // ยอดที่กรอก "ดึงได้จริง" ไปแล้วในการแจกนี้ → บวกคืน ให้ได้แผนเดียวกับตอนเปิดแจก
-    const pulled = new Map();
-    for (const p of await rest(`feather_pulls?select=entry_id,color,qty&drop_id=eq.${d.id}`)) pulled.set(`${p.entry_id}:${p.color}`, p.qty);
-    const gets = new Map();
-    for (const color of single ? ['white'] : ['white', 'red']) {
-      let free = d[`total_${color}`] || 0;
-      const cap = d[`cap_${color}`] ?? Infinity;
-      for (const e of entries) {
-        if (free <= 0) break;
-        const gotBefore = e[`got_${color}`] - (pulled.get(`${e.id}:${color}`) || 0);
-        const need = Math.min(cap, Math.max(0, e[`want_${color}`] - gotBefore));
-        const take = Math.min(need, free);
-        if (!take) continue;
-        free -= take;
-        const g = gets.get(e.discord_id) || { white: 0, red: 0, round: no.get(e.round_id) };
-        g[color] += take;
-        gets.set(e.discord_id, g);
-      }
-    }
-    for (const [id, g] of gets) {
-      if (!(await claim('drop', id, d.id))) continue;
-      const what = single ? `**การ์ด ${g.white} ใบ**` : `**ขนขาว ${g.white} · ขนแดง ${g.red}**`;
-      await dm(client, id,
-        `${single ? '🃏 เปิดแจกการ์ดแล้ว!' : '🕊️ เปิดแจกขนนกแล้ว!'} รอบนี้คุณได้ ${what} (รอบที่ ${g.round})\n` +
-        `ดูตำแหน่งที่ต้องดึงได้ที่ ${HUB}/#${single ? 'cards' : 'feathers'}`,
-        `drop ${d.id}`);
-    }
-  }
-}
-
-module.exports = { weeklyStatsReminder, dropOpenedNotify, isoWeek };
+module.exports = { weeklyStatsReminder, isoWeek };
