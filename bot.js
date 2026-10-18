@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
 const { getUnnotifiedReviews, markNotified } = require('./db');
-const { weeklyStatsReminder } = require('./notify');
+const { weeklyStatsReminder, weeklyStatsSummary } = require('./notify');
 
 // ส่ง Stats ย้ายไปหน้าเว็บ (Guild Hub → Submit stats) แล้ว — บอทเหลือหน้าที่ DM แจ้งผลรีวิว
 const HUB_URL = 'https://roo-manager.vercel.app/#stats';
@@ -16,6 +16,8 @@ client.once('clientReady', () => {
   setInterval(notifyReviewResults, REVIEW_POLL_MS);
   runSafe('reminder', () => weeklyStatsReminder(client));
   setInterval(() => runSafe('reminder', () => weeklyStatsReminder(client)), REMINDER_POLL_MS);
+  runSafe('summary', () => weeklyStatsSummary(client));
+  setInterval(() => runSafe('summary', () => weeklyStatsSummary(client)), REMINDER_POLL_MS);
 });
 
 // กันงานเดียวกันรันซ้อน (เช่น รอบก่อนยังส่ง DM ไม่เสร็จ)

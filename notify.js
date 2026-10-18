@@ -1,4 +1,5 @@
 // DM เตือนลูกกิลที่ยังไม่ส่ง Stats: จันทร์ + อังคาร 18:00 (เวลาไทย) วันละครั้ง
+// + สรุปรายสัปดาห์ลงช่อง: พุธ 09:00
 // ส่งคนละครั้งเท่านั้น: จองแถวใน notify_log ก่อนส่ง (ถ้ามีแล้ว = เคยส่ง ข้าม)
 const HUB = 'https://roo-manager.vercel.app';
 
@@ -64,4 +65,61 @@ async function weeklyStatsReminder(client, now = new Date()) {
   }
 }
 
-module.exports = { weeklyStatsReminder, isoWeek };
+// ── สรุปรายสัปดาห์ลงช่อง Discord: พุธ 09:00 (เวลาไทย) หลังปิดเตือนวันอังคาร — สัปดาห์ละครั้ง ──
+// ตั้ง STATS_SUMMARY_CHANNEL_ID ใน env ถึงจะส่ง (ไม่ตั้ง = ปิด)
+const fmt = (n) => Math.round(Number(n)).toLocaleString('en-US');
+const list = (names, max = 25) => names.length > max ? `${names.slice(0, max).join(', ')} และอีก ${names.length - max} คน` : names.join(', ');
+
+async function weeklyStatsSummary(client, now = new Date()) {
+  const channelId = process.env.STATS_SUMMARY_CHANNEL_ID;
+  if (!channelId) return;
+  const th = new Date(now.getTime() + 7 * 3600 * 1000);
+  if (th.getUTCDay() !== 3 || th.getUTCHours() < 9) return;   // 3 = พุธ
+  const week = isoWeek(now);
+  if (!(await claim('stats_summary', 'channel', week))) return;
+
+  const lastWeek = isoWeek(new Date(now.getTime() - 7 * 86400000));
+  const [members, subs, prev, ths] = await Promise.all([
+    rest('members?select=discord_id,name,class,gl_job&status=eq.active'),
+    rest(`stats_submissions?select=*&week=eq.${encodeURIComponent(week)}&status=neq.rejected&order=submitted_at.asc`),
+    rest(`stats_submissions?select=discord_id,hp,patk,matk&week=eq.${encodeURIComponent(lastWeek)}&status=eq.approved&order=submitted_at.asc`),
+    rest('stats_thresholds?select=class,field,min_value'),
+  ]);
+  const latest = new Map(); for (const s of subs) latest.set(s.discord_id, s);
+  const before = new Map(); for (const s of prev) before.set(s.discord_id, s);
+  const bench = {}; for (const t of ths) (bench[t.class] ??= {})[t.field] = Number(t.min_value);
+
+  const missing = [], below = [], gains = [];
+  for (const m of members) {
+    const s = latest.get(m.discord_id);
+    if (!s) { missing.push(m.name); continue; }
+    const b = bench[m.gl_job || m.class] || {};
+    const fails = Object.entries(b).filter(([f, min]) => s[f] != null && Number(s[f]) < min).length;
+    if (fails) below.push({ name: m.name, fails });
+    const p = before.get(m.discord_id);
+    if (p?.hp && s.hp) gains.push({ name: m.name, d: Number(s.hp) - Number(p.hp) });
+  }
+  below.sort((a, b) => b.fails - a.fails);
+  gains.sort((a, b) => b.d - a.d);
+  const top = gains.filter((g) => g.d > 0).slice(0, 5);
+
+  const lines = [
+    `📊 **สรุป Stats สัปดาห์ ${week}**`,
+    `ส่งแล้ว **${members.length - missing.length}/${members.length}** คน`,
+    missing.length ? `\n⏳ **ยังไม่ส่ง (${missing.length})**: ${list(missing)}` : '\n✅ ทุกคนส่งครบแล้ว',
+    below.length ? `\n🔻 **ต่ำกว่าเกณฑ์ (${below.length})**: ${list(below.map((x) => `${x.name} (${x.fails})`))}` : '',
+    top.length ? `\n📈 **HP เพิ่มขึ้นมากสุด**: ${top.map((g, i) => `${i + 1}. ${g.name} +${fmt(g.d)}`).join(' · ')}` : '',
+    `\nดูทั้งหมด: ${HUB}/#stats`,
+  ].filter(Boolean);
+  let text = lines.join('\n');
+  if (text.length > 1950) text = text.slice(0, 1950) + '…';
+  try {
+    const ch = await client.channels.fetch(channelId);
+    await ch.send(text);
+    console.log(`[notify] stats summary ${week} → #${channelId}`);
+  } catch (err) {
+    console.error('[notify] ส่งสรุป Stats ไม่ได้:', err.message);
+  }
+}
+
+module.exports = { weeklyStatsReminder, weeklyStatsSummary, isoWeek };
