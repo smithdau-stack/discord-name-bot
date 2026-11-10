@@ -1,5 +1,6 @@
-// DM เตือนลูกกิลที่ยังไม่ส่ง Stats: จันทร์ + อังคาร 18:00 (เวลาไทย) วันละครั้ง
-// + สรุปรายสัปดาห์ลงช่อง: พุธ 09:00
+// รอบส่ง Stats: เดือนละครั้ง ช่วงวันที่ 16 – สิ้นเดือน (เวลาไทย)
+// DM เตือนคนที่ยังไม่ส่ง: วันที่ 16, 23 และวันสุดท้ายของเดือน 18:00 (เวลาไทย) วันละครั้ง
+// + สรุปรอบลงช่อง: วันที่ 1 ของเดือนถัดไป 09:00
 // ส่งคนละครั้งเท่านั้น: จองแถวใน notify_log ก่อนส่ง (ถ้ามีแล้ว = เคยส่ง ข้าม)
 const HUB = 'https://roo-manager.vercel.app';
 
@@ -44,45 +45,59 @@ async function dm(client, discordId, text, label) {
   }
 }
 
-// ── เตือนส่ง Stats: จันทร์/อังคาร 18:00 เป็นต้นไป (เวลาไทย = 11:00 UTC) ใครยังไม่มีรายการสัปดาห์นี้ (ไม่นับที่ถูก Reject) ──
-async function weeklyStatsReminder(client, now = new Date()) {
-  const th = new Date(now.getTime() + 7 * 3600 * 1000);   // เวลาไทย
-  const day = th.getUTCDay();   // 1 = จันทร์, 2 = อังคาร
-  if ((day !== 1 && day !== 2) || th.getUTCHours() < 18) return;
-  const week = isoWeek(now);
-  const key = `${week}-${day === 1 ? 'mon' : 'tue'}`;   // วันละครั้ง
+// ── รอบส่ง: วันที่ 16 00:00 → สิ้นเดือน (เวลาไทย) ──
+const TH = 7 * 3600 * 1000;
+const thNow = (now) => new Date(now.getTime() + TH);
+const pad = (n) => String(n).padStart(2, '0');
+// y/m = เดือนตามเวลาไทย (m 0-based) → { key: '2026-11', from/to เป็น ISO UTC }
+function period(y, m) {
+  const from = new Date(Date.UTC(y, m, 16) - TH), to = new Date(Date.UTC(y, m + 1, 1) - TH);
+  const start = new Date(Date.UTC(y, m, 1));   // ทำให้เดือนติดลบ/เกิน 11 เป็นปี-เดือนจริง
+  return { key: `${start.getUTCFullYear()}-${pad(start.getUTCMonth() + 1)}`, from: from.toISOString(), to: to.toISOString() };
+}
+const inPeriod = (p) => `submitted_at=gte.${encodeURIComponent(p.from)}&submitted_at=lt.${encodeURIComponent(p.to)}`;
+
+// ── เตือนส่ง Stats: วันที่ 16 / 23 / วันสุดท้ายของเดือน 18:00 เป็นต้นไป ใครยังไม่มีรายการในรอบนี้ (ไม่นับที่ถูก Reject) ──
+async function statsReminder(client, now = new Date()) {
+  const th = thNow(now);
+  const y = th.getUTCFullYear(), m = th.getUTCMonth(), d = th.getUTCDate();
+  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  if (![16, 23, lastDay].includes(d) || th.getUTCHours() < 18) return;
+  const p = period(y, m);
+  const key = `${p.key}-d${pad(d)}`;   // วันละครั้ง
   const [members, subs] = await Promise.all([
     rest('members?select=discord_id,name&status=eq.active'),
-    rest(`stats_submissions?select=discord_id&week=eq.${encodeURIComponent(week)}&status=neq.rejected`),
+    rest(`stats_submissions?select=discord_id&${inPeriod(p)}&status=neq.rejected`),
   ]);
   const done = new Set(subs.map((s) => s.discord_id));
-  for (const m of members) {
-    if (done.has(m.discord_id) || !/^\d{17,20}$/.test(m.discord_id)) continue;
-    if (!(await claim('stats_reminder', m.discord_id, key))) continue;
-    await dm(client, m.discord_id,
-      `⏰ สวัสดี **${m.name}** — สัปดาห์นี้คุณยังไม่ได้ส่ง Stats\nส่งได้ที่ ${HUB}/#stats (ใช้รูป 4 รูป ไม่ถึง 2 นาที)`,
+  const deadline = d === lastDay ? 'วันนี้วันสุดท้าย' : `ส่งได้ถึงวันที่ ${lastDay}`;
+  for (const mem of members) {
+    if (done.has(mem.discord_id) || !/^\d{17,20}$/.test(mem.discord_id)) continue;
+    if (!(await claim('stats_reminder', mem.discord_id, key))) continue;
+    await dm(client, mem.discord_id,
+      `⏰ สวัสดี **${mem.name}** — รอบนี้คุณยังไม่ได้ส่ง Stats (${deadline})\nส่งได้ที่ ${HUB}/#stats (ใช้รูป 4 รูป ไม่ถึง 2 นาที)`,
       `stats reminder ${key}`);
   }
 }
 
-// ── สรุปรายสัปดาห์ลงช่อง Discord: พุธ 09:00 (เวลาไทย) หลังปิดเตือนวันอังคาร — สัปดาห์ละครั้ง ──
+// ── สรุปรอบลงช่อง Discord: วันที่ 1 09:00 (เวลาไทย) หลังปิดรอบ — เดือนละครั้ง ──
 // ตั้ง STATS_SUMMARY_CHANNEL_ID ใน env ถึงจะส่ง (ไม่ตั้ง = ปิด)
 const fmt = (n) => Math.round(Number(n)).toLocaleString('en-US');
 const list = (names, max = 25) => names.length > max ? `${names.slice(0, max).join(', ')} และอีก ${names.length - max} คน` : names.join(', ');
 
-async function weeklyStatsSummary(client, now = new Date()) {
+async function statsSummary(client, now = new Date()) {
   const channelId = process.env.STATS_SUMMARY_CHANNEL_ID;
   if (!channelId) return;
-  const th = new Date(now.getTime() + 7 * 3600 * 1000);
-  if (th.getUTCDay() !== 3 || th.getUTCHours() < 9) return;   // 3 = พุธ
-  const week = isoWeek(now);
-  if (!(await claim('stats_summary', 'channel', week))) return;
+  const th = thNow(now);
+  if (th.getUTCDate() !== 1 || th.getUTCHours() < 9) return;
+  const y = th.getUTCFullYear(), mo = th.getUTCMonth();
+  const cur = period(y, mo - 1), last = period(y, mo - 2);   // Date.UTC รับเดือนติดลบได้
+  if (!(await claim('stats_summary', 'channel', cur.key))) return;
 
-  const lastWeek = isoWeek(new Date(now.getTime() - 7 * 86400000));
   const [members, subs, prev, ths] = await Promise.all([
     rest('members?select=discord_id,name,class,gl_job&status=eq.active'),
-    rest(`stats_submissions?select=*&week=eq.${encodeURIComponent(week)}&status=neq.rejected&order=submitted_at.asc`),
-    rest(`stats_submissions?select=discord_id,hp,patk,matk&week=eq.${encodeURIComponent(lastWeek)}&status=eq.approved&order=submitted_at.asc`),
+    rest(`stats_submissions?select=*&${inPeriod(cur)}&status=neq.rejected&order=submitted_at.asc`),
+    rest(`stats_submissions?select=discord_id,hp,patk,matk&${inPeriod(last)}&status=eq.approved&order=submitted_at.asc`),
     rest('stats_thresholds?select=class,field,min_value'),
   ]);
   const latest = new Map(); for (const s of subs) latest.set(s.discord_id, s);
@@ -104,7 +119,7 @@ async function weeklyStatsSummary(client, now = new Date()) {
   const top = gains.filter((g) => g.d > 0).slice(0, 5);
 
   const lines = [
-    `📊 **สรุป Stats สัปดาห์ ${week}**`,
+    `📊 **สรุป Stats รอบ ${cur.key}** (16 – สิ้นเดือน)`,
     `ส่งแล้ว **${members.length - missing.length}/${members.length}** คน`,
     missing.length ? `\n⏳ **ยังไม่ส่ง (${missing.length})**: ${list(missing)}` : '\n✅ ทุกคนส่งครบแล้ว',
     below.length ? `\n🔻 **ต่ำกว่าเกณฑ์ (${below.length})**: ${list(below.map((x) => `${x.name} (${x.fails})`))}` : '',
@@ -116,10 +131,10 @@ async function weeklyStatsSummary(client, now = new Date()) {
   try {
     const ch = await client.channels.fetch(channelId);
     await ch.send(text);
-    console.log(`[notify] stats summary ${week} → #${channelId}`);
+    console.log(`[notify] stats summary ${cur.key} → #${channelId}`);
   } catch (err) {
     console.error('[notify] ส่งสรุป Stats ไม่ได้:', err.message);
   }
 }
 
-module.exports = { weeklyStatsReminder, weeklyStatsSummary, isoWeek };
+module.exports = { statsReminder, statsSummary, isoWeek };
